@@ -1,0 +1,19 @@
+{
+  "name": "crm-jc",
+  "version": "1.0.0",
+  "description": "CRM de prospecção da JC Automações",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "exceljs": "^4.4.0",
+    "express": "^4.22.3",
+    "multer": "^2.4.0"
+  }
+}
