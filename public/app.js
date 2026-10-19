@@ -5,7 +5,9 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const money = v => 'R$ ' + Math.round(v || 0).toLocaleString('pt-BR');
+let VALORES_OCULTOS = true;
+try { VALORES_OCULTOS = localStorage.getItem('crm_valores_ocultos') !== '0'; } catch { /* ok */ }
+const money = v => VALORES_OCULTOS ? 'R$ ••••' : 'R$ ' + Math.round(v || 0).toLocaleString('pt-BR');
 const pct = (v, d = 0) => (v == null ? '—' : (v * 100).toLocaleString('pt-BR', { maximumFractionDigits: d, minimumFractionDigits: d }) + '%');
 const n = v => (v || 0).toLocaleString('pt-BR');
 const store = {
@@ -79,6 +81,12 @@ const I = {
   trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>',
   download: '<path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  'eye-off': '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 15.3-6.5L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.3 6.5L3 16"/><path d="M8 16H3v5"/>',
 };
 const ic = (name, size = 16) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[name]}</svg>`;
 
@@ -88,8 +96,107 @@ const ST_LABEL = { 'Forte Lead': 'Prévia enviada' };
 const stLabel = s => ST_LABEL[s] || s;
 const CANAL = { whatsapp: 'WhatsApp', ligacao: 'Ligação' };
 const REDE = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', linktree: 'Linktree', wa_disguised: 'WhatsApp', outro: 'Site/rede' };
+const HOJE_FRASE = {
+  instagram: 'só o Instagram, sem site',
+  facebook: 'só o Facebook, sem site',
+  linkedin: 'só o LinkedIn, sem site',
+  linktree: 'só um Linktree, sem site',
+  wa_disguised: 'só um link de WhatsApp, sem site nem rede social',
+  outro: 'uma rede social, mas não um site de verdade',
+};
+function hojeFrase(l) {
+  if (l.rede_link) return HOJE_FRASE[l.rede_tipo] || HOJE_FRASE.outro;
+  return 'sem site nem rede social';
+}
+function buildColdCall(l) {
+  const nome = l.nome || '';
+  const cat = (l.categoria || l.nicho || 'negócio').toLowerCase();
+  const busca = `${l.categoria || l.nicho || 'esse tipo de negócio'}${l.cidade ? ` em ${l.cidade}` : ''}`;
+  const hoje = hojeFrase(l);
+  return [
+    `É da ${nome}? Falo com o(a) responsável aí?`,
+    `[Atendente / não é o responsável] "Oi, tudo bem? Seria o(a) responsável aí, ou quem cuida da parte de divulgação/redes do negócio?"`,
+    `[É o responsável] Meu nome é Jean, da JC Automações. Vou ser direto com você: tenho uma proposta pra ${nome}, você quer desligar agora ou topa me dar 20 segundos e aí você decide?`,
+    `[Resposta positiva] Show. Eu ajudo negócios de ${cat} a aparecer no Google de verdade — vi que vocês hoje estão ${hoje}. O problema é que quem procura "${busca}" no Google não encontra vocês, só quem tem site de verdade aparece.`,
+    `[Resposta positiva] Perfeito, qual o melhor dia e horário essa semana pra gente conversar por vídeo?`,
+    `[Agendou] Combinado! Me confirma seu nome e um e-mail (ou pode ser nesse WhatsApp mesmo) pra eu te mandar o convite da chamada. Obrigado pelo tempo!`,
+    `[Resposta negativa / sem tempo] Sem problema! Prefere que eu te ligue outro dia, ou te chamo no WhatsApp pra combinarmos o melhor horário?`,
+  ].join('\n\n');
+}
 
 async function loadMeta() { META = await api('/api/meta'); return META; }
+
+// ---------- mensagens padrão (abas) e nichos ----------
+const semAcento = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+// "# É Festa Buffet - Cidade Nova" -> "É Festa Buffet"
+function sugestaoNicho(sheet) {
+  const cont = {};
+  for (const r of sheet.rows || []) { const n = canonNicho(r.nicho, r.categoria, r.nome); if (n) cont[n] = (cont[n] || 0) + 1; }
+  return Object.entries(cont).sort((a, b) => b[1] - a[1])[0]?.[0] || canonNicho(sheet.suggestion?.nicho) || '';
+}
+function nomeCurto(nome) {
+  const limpo = String(nome || '').replace(/^[^\p{L}\p{N}]+/u, '').split(/\s+[-|–—]\s+|\s*\(/)[0].trim();
+  return limpo.length >= 3 ? limpo : String(nome || '').trim();
+}
+// Nichos inválidos que vinham do nome do arquivo/aba da planilha
+const NICHO_LIXO = new Set(['leads', 'lead', 'prontos', 'leads prontos', 'qualificados', 'leads qualificados', 'contatar', 'site fora do ar', 'planilha', 'sheet', 'aba']);
+const isNichoLixo = n => !n || NICHO_LIXO.has(semAcento(n).trim());
+const NICHO_REGRAS = [
+  ['Fotógrafo de Casamento', /fotograf|fotografo|ensaio|filmag/],
+  ['Recreação', /recreac|recreador|animac/],
+  ['Buffet de Casamento', /buffet|cerimonial|casamento|evento|festa|catering|salao de festa/],
+  ['Confeitaria', /confeit|doceria|doces|bolo|brigadeir|bakery|patisserie|padaria|cake|gelato|sorvet/],
+  ['Hamburgueria', /hamburg|burger|burguer|lanchonete|lanches/],
+  ['Pousadas', /pousada|hotel|hospedagem|chale|chalet|flat|hostel/],
+  ['Energia Solar', /solar|fotovolt/],
+  ['Ar Condicionado', /ar.?condicionado|climatiza|refrigera/],
+  ['Piscinas', /piscina/],
+  ['Mudanças', /mudanca|carreto/],
+  ['Financeira', /financ|credito|emprestimo|consignado|cobranca|contab|fomento/],
+  ['Mobilidade Elétrica', /scooter|patinete|bike eletr|moto eletr|bicicleta eletr/],
+];
+// Encaixa um texto (busca, categoria, nome) num nicho que já existe
+function canonNicho(...textos) {
+  for (const t of textos) {
+    if (!t || isNichoLixo(t)) continue;
+    const n = semAcento(t).trim();
+    const existente = (META?.nichos || []).find(x => !isNichoLixo(x.v) && [n, n.replace(/s$/, '')].includes(semAcento(x.v).replace(/s$/, '')));
+    if (existente) return existente.v;
+    const regra = NICHO_REGRAS.find(([, re]) => re.test(n));
+    if (regra) return regra[0];
+  }
+  return '';
+}
+const TERMO_NICHO = {
+  'Buffet de Casamento': 'um bom buffet', 'Confeitaria': 'uma boa confeitaria', 'Hamburgueria': 'uma boa hamburgueria',
+  'Pousadas': 'uma boa pousada', 'Energia Solar': 'uma empresa de energia solar', 'Ar Condicionado': 'uma empresa de ar-condicionado',
+  'Piscinas': 'uma empresa de piscinas', 'Fotógrafo de Casamento': 'um bom fotógrafo de casamento', 'Financeira': 'uma financeira de confiança',
+  'Mudanças': 'uma empresa de mudanças', 'Mobilidade Elétrica': 'uma loja de scooter elétrica', 'Recreação': 'uma boa recreação para festas',
+};
+const termoNicho = l => TERMO_NICHO[canonNicho(l.nicho, l.categoria, l.nome)] || 'um serviço como o de vocês';
+// Texto antigo gerado pelo Lead Bot: não serve mais pra Aba 2
+const msgAntigaDoBot = t => /no Google Maps e reparei|O problema é que quem pesquisa|Trabalho com criação de sites e monto/i.test(t || '');
+const MSG_PADRAO = {
+  ola: () => 'Olá, tudo bem?',
+  whatsapp: l => `Consigo falar com o responsável pela ${nomeCurto(l.nome)}, por favor?`,
+  pitch: l => `Sou o Jean, da JC Automações. Vi a ${nomeCurto(l.nome)} e queria entender se faz sentido eu te apresentar uma proposta voltada a fazer a empresa aparecer no Google com um site oficial. Atualmente, quem procura ${termoNicho(l)} com um site que passa confiança infelizmente não acha vocês, porque no momento vocês não estão visíveis lá no Google. Você teria uns 5 minutinhos pra uma reunião rápida essa semana? Nessa reunião já te mostro algo pronto, exclusivo pra vocês.`,
+};
+// Texto de cada aba: o que foi salvo no lead, ou o padrão
+function msgPadrao(l, aba) {
+  if (aba === 'ligacao') return l.script_ligacao || '';
+  if (aba === 'ola') return l.mensagem_ola || MSG_PADRAO.ola(l);
+  if (aba === 'pitch') return l.mensagem_pitch || MSG_PADRAO.pitch(l);
+  return l.mensagem && !msgAntigaDoBot(l.mensagem) ? l.mensagem : MSG_PADRAO.whatsapp(l);
+}
+// Próxima mensagem do fluxo pelo status: Novo -> Aba 1, Contatado/Respondeu -> Aba 2, Responsável confirmado -> Aba 3
+function abaDoStatus(l) {
+  if (l.status === 'Novo') return 'ola';
+  if (l.status === 'Contatado' || l.status === 'Respondeu') return 'whatsapp';
+  if (l.status === 'Responsável confirmado') return 'pitch';
+  return null;
+}
+const waUrl = (l, texto) => `https://wa.me/${l.tel_digits}${texto ? '?text=' + encodeURIComponent(texto) : ''}`;
+const waDoLead = l => { const aba = abaDoStatus(l); return waUrl(l, aba ? msgPadrao(l, aba) : ''); };
 
 // ---------- toast / modal / tooltip ----------
 function toast(msg, { err = false, actions = [], ms = 3200 } = {}) {
@@ -220,6 +327,7 @@ function shell() {
       <nav class="nav">${ROUTES.map(r => `<a href="${r.hash}" data-r="${r.hash}">${ic(r.icon, 18)}${r.label}<span class="badge-n hide" data-late></span></a>`).join('')}</nav>
       <div class="side-foot">
         <button class="btn sm ghost" id="theme" data-tip="Alternar tema claro/escuro">${ic('sun')} Tema</button>
+        <button class="btn sm ghost" id="valtoggle" data-tip="Mostrar ou ocultar valores (R$)">${ic(VALORES_OCULTOS ? 'eye-off' : 'eye')} ${VALORES_OCULTOS ? 'Mostrar valores' : 'Ocultar valores'}</button>
         ${ME.passwordEnabled ? `<button class="btn sm ghost" id="logout">${ic('out')} Sair</button>` : ''}
       </div>
     </aside>
@@ -230,6 +338,12 @@ function shell() {
     const cur = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = cur;
     try { localStorage.setItem('crm_theme', cur); } catch { /* ok */ }
+  };
+  $('#valtoggle').onclick = () => {
+    VALORES_OCULTOS = !VALORES_OCULTOS;
+    try { localStorage.setItem('crm_valores_ocultos', VALORES_OCULTOS ? '1' : '0'); } catch { /* ok */ }
+    shell();
+    route();
   };
   $('#logout')?.addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.reload(); });
 }
@@ -432,7 +546,7 @@ const taskFlag = l => (l.tarefas_abertas
 // Ações sempre nas mesmas posições: o que não existe aparece apagado, pra alinhar tudo.
 function leadIcons(l) {
   return `<div class="iconrow">
-    <a class="ibtn wa" href="${esc(l.wa_link)}" target="_blank" rel="noopener" data-act="wa" data-tip="${l.mensagem ? 'Abrir WhatsApp com a mensagem' : 'Abrir WhatsApp (sem mensagem escrita)'}">${ic('wa', 16)}</a>
+    <a class="ibtn wa" href="${esc(waDoLead(l))}" target="_blank" rel="noopener" data-act="wa" data-tip="Abrir WhatsApp com a próxima mensagem do fluxo">${ic('wa', 16)}</a>
     <a class="ibtn call" href="tel:+${esc(l.tel_digits)}" data-act="call" data-tip="Ligar">${ic('phone', 15)}</a>
     <button class="ibtn" data-act="copy-msg" ${l.mensagem ? 'data-tip="Copiar mensagem"' : 'disabled data-tip="Sem mensagem — escreva no detalhe do lead"'}>${ic('msg', 15)}</button>
     ${l.rede_link ? `<a class="ibtn" href="${esc(l.rede_link)}" target="_blank" rel="noopener" data-tip="Ver ${REDE[l.rede_tipo] || 'perfil'}">${ic('link', 15)}</a>` : `<span class="ibtn off" data-tip="Sem rede social">${ic('link', 15)}</span>`}
@@ -468,7 +582,7 @@ function leadCard(l) {
     <div class="tel">${ic('phone', 14)} <span class="num">${esc(l.telefone || l.tel_digits)}</span>
       <button class="ibtn ghost" data-act="copy-tel" data-tip="Copiar telefone">${ic('copy', 14)}</button></div>
     <div class="actions">
-      <a class="btn sm wa" href="${esc(l.wa_link)}" target="_blank" rel="noopener" data-act="wa">${ic('wa', 14)} WhatsApp</a>
+      <a class="btn sm wa" href="${esc(waDoLead(l))}" target="_blank" rel="noopener" data-act="wa">${ic('wa', 14)} WhatsApp</a>
       <a class="btn sm call" href="tel:+${esc(l.tel_digits)}" data-act="call">${ic('phone', 14)} Ligar</a>
       <span class="spacer"></span>
       <button class="ibtn" data-act="copy-msg" ${l.mensagem ? 'data-tip="Copiar mensagem"' : 'disabled data-tip="Sem mensagem — escreva no detalhe do lead"'}>${ic('msg', 15)}</button>
@@ -536,6 +650,23 @@ async function askBulkStatus(count, novo) {
   return body;
 }
 
+async function corrigirNichos(btn) {
+  btn.disabled = true;
+  let feitos = 0;
+  for (const x of META.nichos.filter(x => isNichoLixo(x.v))) {
+    for (;;) {
+      const r = await api('/api/leads?limit=200&nicho=' + encodeURIComponent(x.v));
+      if (!r.items.length) break;
+      for (const l of r.items) {
+        await api(`/api/leads/${l.id}`, { method: 'PATCH', body: { nicho: canonNicho(l.categoria, l.nome) || 'Avulso' } });
+        btn.textContent = `Corrigindo… ${++feitos}`;
+      }
+    }
+  }
+  toast(`${n(feitos)} leads reclassificados`);
+  location.reload();
+}
+
 async function renderLeads(view) {
   await loadMeta();
   let offset = 0, total = 0;
@@ -553,6 +684,7 @@ async function renderLeads(view) {
         <button class="btn primary" id="newLead">${ic('plus')} Novo lead</button>
       </div>
     </div>
+    <div id="fixNicho"></div>
     <div class="toolbar card">
       <div class="tb-main">
         <input class="input search" type="search" placeholder="Buscar nome, categoria, endereço ou telefone…" data-f="q" value="${esc(leadF.q)}">
@@ -670,6 +802,14 @@ async function renderLeads(view) {
     if (el) el.outerHTML = render(leadCache.get(u.id));
   });
   $('#newLead', view).addEventListener('click', () => newLeadModal());
+  const lixo = META.nichos.filter(x => isNichoLixo(x.v));
+  if (lixo.length) {
+    const qtd = lixo.reduce((t, x) => t + x.n, 0);
+    $('#fixNicho', view).innerHTML = `<div class="card" style="margin-bottom:16px;border-color:var(--warn);display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <span><b>${n(qtd)} lead${qtd > 1 ? 's' : ''}</b> com nicho inválido (${lixo.map(x => '"' + esc(x.v) + '"').join(', ')}), vindo do nome da planilha.</span>
+      <span class="spacer"></span><button class="btn primary sm" id="btnFixNicho">Classificar pela categoria do Google</button></div>`;
+    $('#btnFixNicho', view).addEventListener('click', e => corrigirNichos(e.target).catch(toastErr));
+  }
   await load();
 }
 
@@ -701,6 +841,7 @@ async function newLeadModal() {
 // DETALHE DO LEAD
 // ============================================================
 let detailCanal = 'whatsapp';
+let detailMsgMode = 'ola';
 
 function eventHtml(e, seq) {
   let icon = 'flag', cls = e.tipo, title = '', det = e.detalhe ? esc(e.detalhe) : '';
@@ -752,7 +893,7 @@ async function renderLead(view, id) {
           ${l.plano || l.valor_fechado != null ? `<span class="badge" style="color:var(--good)">${l.plano ? esc(META.planos[l.plano].label) + ' · ' : ''}${money(l.valor)}${l.manutencao ? ' + manutenção' : ''}</span>` : ''}</div>
       </div>
       <div class="row" data-id="${l.id}">
-        <a class="btn wa" href="${esc(l.wa_link)}" target="_blank" rel="noopener" id="hWa">${ic('wa')} WhatsApp</a>
+        <a class="btn wa" href="${esc(detailMsgMode === 'ligacao' ? waDoLead(l) : waUrl(l, msgPadrao(l, detailMsgMode)))}" target="_blank" rel="noopener" id="hWa">${ic('wa')} WhatsApp</a>
         <a class="btn call" href="tel:+${esc(l.tel_digits)}" id="hCall">${ic('phone')} Ligar</a>
         ${statusSelect(l, 'id="hStatus"')}
       </div>
@@ -800,12 +941,21 @@ async function renderLead(view, id) {
 
       <div class="grid col-m" style="align-content:start">
         <div class="card">
-          <div class="card-head"><h2>Mensagem de abordagem</h2><span class="muted small">texto que vai no WhatsApp</span></div>
-          <textarea class="input" id="msg" rows="6" placeholder="Escreva ou cole aqui a mensagem pra esse lead…">${esc(l.mensagem || '')}</textarea>
+          <div class="card-head"><h2>Mensagem de abordagem</h2>
+            <div class="seg" id="msgModeSeg">
+              <button data-v="ola" class="${detailMsgMode === 'ola' ? 'on' : ''}">${ic('wa', 14)} Aba 1</button>
+        <button data-v="whatsapp" class="${detailMsgMode === 'whatsapp' ? 'on' : ''}">${ic('wa', 14)} Aba 2</button>
+              <button data-v="pitch" class="${detailMsgMode === 'pitch' ? 'on' : ''}">${ic('wa', 14)} Aba 3</button>
+              <button data-v="ligacao" class="${detailMsgMode === 'ligacao' ? 'on' : ''}">${ic('phone', 14)} Cold Call</button>
+            </div>
+          </div>
+          <textarea class="input" id="msg" rows="7" placeholder="Escreva ou cole aqui a mensagem pra esse lead…">${esc(msgPadrao(l, detailMsgMode))}</textarea>
           <div class="row" style="margin-top:10px">
-            <button class="btn primary sm" id="saveMsg">Salvar mensagem</button>
+            <button class="btn primary sm" id="saveMsg">Salvar</button>
             <button class="btn sm" id="cpMsg">${ic('copy', 14)} Copiar</button>
-            <button class="btn sm wa" id="sendMsg">${ic('wa', 14)} Abrir WhatsApp com a mensagem</button>
+            ${detailMsgMode === 'ligacao'
+              ? `<button class="btn sm" id="genMsg">${ic('bolt', 14)} Gerar automaticamente</button>`
+              : `<button class="btn sm wa" id="sendMsg">${ic('wa', 14)} Abrir WhatsApp com a mensagem</button>`}
           </div>
         </div>
         <div class="card">
@@ -872,13 +1022,20 @@ async function renderLead(view, id) {
   $('#hCall', view).addEventListener('click', () => setTimeout(() => offerLog(l, 'ligacao', reload), 400));
   $('#cpTel', view).addEventListener('click', () => copy(l.telefone || l.tel_digits, 'Telefone copiado'));
 
-  const saveMsg = async () => api(`/api/leads/${l.id}`, { method: 'PATCH', body: { mensagem: $('#msg', view).value } });
+  const msgField = () => (detailMsgMode === 'ligacao' ? 'script_ligacao' : detailMsgMode === 'ola' ? 'mensagem_ola' : detailMsgMode === 'pitch' ? 'mensagem_pitch' : 'mensagem');
+  const saveMsg = async () => api(`/api/leads/${l.id}`, { method: 'PATCH', body: { [msgField()]: $('#msg', view).value } });
+  $('#msgModeSeg', view).addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b || b.dataset.v === detailMsgMode) return;
+    detailMsgMode = b.dataset.v;
+    renderLead(view, id);
+  });
   $('#saveMsg', view).addEventListener('click', async () => { try { Object.assign(l, await saveMsg()); toast('Mensagem salva'); } catch (err) { toastErr(err); } });
   $('#cpMsg', view).addEventListener('click', () => { const v = $('#msg', view).value; if (v) copy(v, 'Mensagem copiada'); });
-  $('#sendMsg', view).addEventListener('click', async () => {
+  $('#genMsg', view)?.addEventListener('click', () => { $('#msg', view).value = buildColdCall(l); });
+  $('#sendMsg', view)?.addEventListener('click', async () => {
     try {
       const u = await saveMsg(); Object.assign(l, u);
-      window.open(u.wa_link, '_blank', 'noopener');
+      window.open(waUrl(l, $('#msg', view).value), '_blank', 'noopener');
       setTimeout(() => offerLog(l, 'whatsapp', reload), 400);
     } catch (err) { toastErr(err); }
   });
@@ -1058,7 +1215,7 @@ async function renderImport(view) {
           ${s.descartados ? `<span class="badge">${n(s.descartados)} excluídos antes (pulados)</span>` : ''}
           ${s.semTelefone ? `<span class="badge">${n(s.semTelefone)} sem telefone (ignorados)</span>` : ''}</div>
         <div class="grid g4" style="gap:10px">
-          <label class="f"><span>Nicho do lote (vale pra todas as linhas)</span><input class="input" data-k="nicho" list="dl-in" value="${esc(s.suggestion.nicho)}" placeholder="ex: Confeitaria"></label>
+          <label class="f"><span>Nicho do lote (se mudar, vale pra todas as linhas)</span><input class="input" data-k="nicho" list="dl-in" value="${esc(sugestaoNicho(s))}" data-sug="${esc(sugestaoNicho(s))}" placeholder="vazio = um nicho por lead"></label>
           <label class="f"><span>Cidade (se não der pra ler do endereço)</span><input class="input" data-k="cidade" list="dl-ic" value="${esc(s.suggestion.cidade)}" placeholder="ex: Taubaté"></label>
           <label class="f"><span>Prioridade padrão</span><select class="input" data-k="prioridade"><option value="alta">Alta</option><option value="baixa">Baixa</option><option value="revisar">Revisar</option></select></label>
           <label class="f" style="display:flex;align-items:flex-end;gap:8px"><input type="checkbox" data-k="force" style="margin-bottom:11px"><span style="margin-bottom:8px">Aplicar nicho/cidade também nos que já existem</span></label>
@@ -1076,9 +1233,13 @@ async function renderImport(view) {
       e.target.disabled = true; e.target.textContent = 'Importando…';
       const batches = $$('.sheet', pv).map(el => {
         const s = data.sheets[el.dataset.i];
+        const inp = $('[data-k="nicho"]', el);
+        const digitado = inp.value.trim();
+        const mudou = digitado && digitado !== inp.dataset.sug; // você trocou o nicho sugerido: vale pro lote inteiro
         return {
-          rows: s.rows, origem: `${data.filename}${data.sheets.length > 1 ? ' / ' + s.name : ''}`,
-          nicho: $('[data-k="nicho"]', el).value, cidade: $('[data-k="cidade"]', el).value,
+          rows: s.rows.map(r => ({ ...r, nicho: mudou ? digitado : (canonNicho(r.nicho, r.categoria, r.nome) || digitado || 'Avulso') })),
+          origem: `${data.filename}${data.sheets.length > 1 ? ' / ' + s.name : ''}`,
+          nicho: mudou ? digitado : '', cidade: $('[data-k="cidade"]', el).value,
           prioridade: $('[data-k="prioridade"]', el).value, forceNichoCidade: $('[data-k="force"]', el).checked,
         };
       });
@@ -1108,11 +1269,269 @@ function showLogin() {
   });
 }
 
+// ---------- Assistente de IA (chat flutuante + voz) ----------
+let ASSIST_OPEN = false;
+let ASSIST_MSGS = [];
+let ASSIST_PENDING = null;
+let ASSIST_BUSY = false;
+let ASSIST_VOICE_ON = false;
+let ASSIST_VOICE_ACTIVE = false;
+let ASSIST_RECOG = null;
+let ASSIST_SPEAKING = false;
+
+function assistAddMsg(role, text) {
+  ASSIST_MSGS.push({ role, text });
+  renderAssistMsgs();
+}
+
+function renderAssistMsgs() {
+  const wrap = $('#assist-msgs');
+  if (!wrap) return;
+  wrap.innerHTML = ASSIST_MSGS.map(m => `<div class="assist-msg ${m.role}">${esc(m.text)}</div>`).join('')
+    + (ASSIST_BUSY ? `<div class="assist-msg busy">Pensando…</div>` : '');
+  wrap.scrollTop = wrap.scrollHeight;
+  const pend = $('#assist-pending');
+  if (pend) {
+    if (ASSIST_PENDING) {
+      pend.classList.remove('hidden');
+      pend.innerHTML = `<div>${esc(ASSIST_PENDING.summary || '')}</div><div class="foot"><button class="btn sm primary" id="assist-approve" type="button">Confirmar</button><button class="btn sm ghost" id="assist-deny" type="button">Cancelar</button></div>`;
+      $('#assist-approve').onclick = () => assistConfirm(true);
+      $('#assist-deny').onclick = () => assistConfirm(false);
+    } else {
+      pend.classList.add('hidden');
+      pend.innerHTML = '';
+    }
+  }
+  $('#assist-fab')?.classList.toggle('has-pending', !!ASSIST_PENDING);
+}
+
+async function assistSend(text) {
+  text = (text || '').trim();
+  if (!text || ASSIST_BUSY) return;
+  assistAddMsg('user', text);
+  ASSIST_BUSY = true;
+  renderAssistMsgs();
+  try {
+    const data = await api('/api/assistant', { method: 'POST', body: { message: text } });
+    ASSIST_BUSY = false;
+    if (data.reply) assistAddMsg('bot', data.reply);
+    ASSIST_PENDING = data.pending || null;
+    renderAssistMsgs();
+    if (ASSIST_VOICE_ON) assistSpeak(data.reply || (ASSIST_PENDING ? ASSIST_PENDING.summary : ''));
+  } catch (e) {
+    ASSIST_BUSY = false;
+    assistAddMsg('sys', 'Erro: ' + (e.message || e));
+    renderAssistMsgs();
+  }
+}
+
+async function assistConfirm(approve) {
+  if (!ASSIST_PENDING) return;
+  const id = ASSIST_PENDING.id;
+  ASSIST_BUSY = true;
+  ASSIST_PENDING = null;
+  renderAssistMsgs();
+  assistAddMsg('sys', approve ? 'Confirmado.' : 'Cancelado.');
+  try {
+    const data = await api('/api/assistant/confirm', { method: 'POST', body: { id, approve } });
+    ASSIST_BUSY = false;
+    if (data.reply) assistAddMsg('bot', data.reply);
+    ASSIST_PENDING = data.pending || null;
+    renderAssistMsgs();
+    if (ASSIST_VOICE_ON) assistSpeak(data.reply || '');
+    if (approve) { try { route(); } catch { /* ok */ } }
+  } catch (e) {
+    ASSIST_BUSY = false;
+    assistAddMsg('sys', 'Erro: ' + (e.message || e));
+    renderAssistMsgs();
+  }
+}
+
+async function assistReset() {
+  ASSIST_MSGS = [];
+  ASSIST_PENDING = null;
+  ASSIST_BUSY = false;
+  renderAssistMsgs();
+  try { await api('/api/assistant/reset', { method: 'POST' }); } catch { /* ok */ }
+  assistAddMsg('sys', 'Nova conversa iniciada.');
+}
+
+function assistVoiceSupported() {
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
+
+function assistSpeak(text) {
+  if (!text || !window.speechSynthesis) return;
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'pt-BR';
+    ASSIST_SPEAKING = true;
+    if (ASSIST_RECOG) { try { ASSIST_RECOG.stop(); } catch { /* ok */ } }
+    u.onend = u.onerror = () => {
+      ASSIST_SPEAKING = false;
+      if (ASSIST_VOICE_ON) assistStartRecog();
+    };
+    window.speechSynthesis.speak(u);
+  } catch { /* ok */ }
+}
+
+function assistStartRecog() {
+  if (!ASSIST_VOICE_ON || ASSIST_SPEAKING) return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+  try {
+    const r = new SR();
+    r.lang = 'pt-BR';
+    r.continuous = false;
+    r.interimResults = false;
+    r.maxAlternatives = 1;
+    r.onresult = ev => {
+      const text = ev.results[ev.results.length - 1][0].transcript.trim();
+      if (text) assistVoiceHeard(text);
+    };
+    r.onerror = (ev) => {
+      const errType = ev && ev.error;
+      if (errType === 'not-allowed' || errType === 'service-not-allowed') {
+        assistSetVoiceStatus('Permissão de microfone negada — libere o microfone nas configurações do navegador.');
+        toast('Permissão de microfone negada. Clique no cadeado da barra de endereços e libere o microfone pra este site.', { err: true });
+        assistStopVoice();
+        return;
+      }
+      if (errType === 'audio-capture') {
+        assistSetVoiceStatus('Nenhum microfone encontrado.');
+        toast('Nenhum microfone encontrado no dispositivo.', { err: true });
+        assistStopVoice();
+        return;
+      }
+      if (errType === 'network') {
+        assistSetVoiceStatus('Sem conexão com o serviço de reconhecimento de voz — tentando de novo...');
+      }
+      // Nao reagenda o restart aqui: o evento 'onend' SEMPRE dispara logo depois de
+      // 'onerror' (inclusive apos um 'no-speech', que acontece toda vez que fica em
+      // silencio). Se os dois reagendassem o restart, criavamos duas sessoes de
+      // reconhecimento simultaneas brigando pelo microfone -- a segunda falha ao
+      // iniciar, ASSIST_RECOG fica apontando pra instancia errada, e o microfone
+      // trava "ouvindo" sem realmente capturar nada. Deixar so o onend reiniciar
+      // evita essa corrida.
+    };
+    r.onend = () => { if (ASSIST_VOICE_ON && !ASSIST_SPEAKING) setTimeout(assistStartRecog, 300); };
+    ASSIST_RECOG = r;
+    r.start();
+  } catch { /* ok */ }
+}
+
+function assistVoiceHeard(text) {
+  const low = text.toLowerCase();
+  if (/\b(abr[ae]|ativ[ae]|liga|ligue)\s+(o\s+)?comando\s+de\s+voz\b/.test(low)) { assistActivateVoice(); return; }
+  if (/\b(fech[ae]|desativ[ae]|desliga|desligue|encerr[ae])\s+(o\s+)?comando\s+de\s+voz\b/.test(low)) { assistDeactivateVoice(); return; }
+  if (/^(encerrar|parar|desligar( o)? microfone|sair)( a)?( chamada)?$/.test(low)) { assistStopVoice(); return; }
+  if (!ASSIST_VOICE_ACTIVE) return;
+  if (ASSIST_PENDING) {
+    if (/^(sim|confirma|confirmar|pode|ok|isso|afirmativo)\b/.test(low)) { assistConfirm(true); return; }
+    if (/^(n[ãa]o|cancela|cancelar|para|negativo)\b/.test(low)) { assistConfirm(false); return; }
+  }
+  assistSend(text);
+}
+
+function assistSetVoiceStatus(msg) {
+  const st = $('#assist-voice-status');
+  if (st) st.textContent = msg;
+}
+
+function assistActivateVoice() {
+  if (ASSIST_VOICE_ACTIVE) return;
+  ASSIST_VOICE_ACTIVE = true;
+  $('#assist-voice-bar')?.classList.add('active');
+  assistSetVoiceStatus('Ouvindo seu comando…');
+  assistAddMsg('sys', 'Comando de voz aberto — pode falar.');
+  assistSpeak('Pode falar.');
+}
+
+function assistDeactivateVoice() {
+  if (!ASSIST_VOICE_ACTIVE) return;
+  ASSIST_VOICE_ACTIVE = false;
+  $('#assist-voice-bar')?.classList.remove('active');
+  assistSetVoiceStatus('Em espera — diga "abra o comando de voz"');
+  assistAddMsg('sys', 'Comando de voz fechado — fico em espera.');
+}
+
+function assistStartVoice() {
+  if (!assistVoiceSupported()) { toast('Reconhecimento de voz não é suportado neste navegador (use Chrome ou Edge).', { err: true }); return; }
+  ASSIST_VOICE_ON = true;
+  ASSIST_VOICE_ACTIVE = false;
+  $('#assist-voice')?.classList.add('active');
+  $('#assist-voice-bar')?.classList.remove('hidden');
+  $('#assist-voice-bar')?.classList.remove('active');
+  assistSetVoiceStatus('Em espera — diga "abra o comando de voz"');
+  if (!ASSIST_OPEN) assistToggle(true);
+  assistAddMsg('sys', 'Microfone ligado, em espera. Diga "abra o comando de voz" pra eu começar a ouvir, e "feche o comando de voz" quando terminar. Diga "encerrar" pra desligar o microfone de vez.');
+  assistStartRecog();
+}
+
+function assistStopVoice() {
+  ASSIST_VOICE_ON = false;
+  ASSIST_VOICE_ACTIVE = false;
+  $('#assist-voice')?.classList.remove('active');
+  $('#assist-voice-bar')?.classList.add('hidden');
+  $('#assist-voice-bar')?.classList.remove('active');
+  if (ASSIST_RECOG) { try { ASSIST_RECOG.stop(); } catch { /* ok */ } ASSIST_RECOG = null; }
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  assistAddMsg('sys', 'Modo voz encerrado.');
+}
+
+function assistToggle(force) {
+  ASSIST_OPEN = typeof force === 'boolean' ? force : !ASSIST_OPEN;
+  $('#assist-panel')?.classList.toggle('hidden', !ASSIST_OPEN);
+  if (ASSIST_OPEN) setTimeout(() => $('#assist-input')?.focus(), 50);
+}
+
+function mountAssistant() {
+  if ($('#assist-widget')) return;
+  const div = document.createElement('div');
+  div.id = 'assist-widget';
+  div.innerHTML = `
+    <button id="assist-fab" class="assist-fab" title="Assistente JC" type="button">${ic('msg', 22)}<span class="dot"></span></button>
+    <div id="assist-panel" class="assist-panel hidden">
+      <div class="assist-head">
+        <strong>Assistente JC</strong>
+        <div class="assist-head-actions">
+          <button id="assist-voice" class="btn icon ghost" title="Modo voz (mãos livres)" type="button">${ic('mic')}</button>
+          <button id="assist-reset" class="btn icon ghost" title="Nova conversa" type="button">${ic('refresh')}</button>
+          <button id="assist-close" class="btn icon ghost" title="Fechar" type="button">${ic('x')}</button>
+        </div>
+      </div>
+      <div id="assist-msgs" class="assist-msgs"></div>
+      <div id="assist-pending" class="assist-pending hidden"></div>
+      <div id="assist-voice-bar" class="assist-voice-bar hidden"><span><span class="pulse"></span><span id="assist-voice-status">Em espera — diga "abra o comando de voz"</span></span><button id="assist-voice-stop" class="btn sm ghost" type="button">Encerrar</button></div>
+      <form id="assist-form" class="assist-form">
+        <input id="assist-input" type="text" placeholder="Pergunte algo ou peça uma ação…" autocomplete="off" />
+        <button class="btn primary sm icon" type="submit">${ic('send')}</button>
+      </form>
+    </div>`;
+  document.body.appendChild(div);
+  assistAddMsg('bot', 'Oi! Posso consultar leads, tarefas e números do funil, ou fazer ações simples (sempre com sua confirmação). Pode perguntar, ou clicar no microfone pra falar.');
+  $('#assist-fab').onclick = () => assistToggle();
+  $('#assist-close').onclick = () => assistToggle(false);
+  $('#assist-reset').onclick = () => assistReset();
+  $('#assist-voice').onclick = () => (ASSIST_VOICE_ON ? assistStopVoice() : assistStartVoice());
+  $('#assist-voice-stop').onclick = () => assistStopVoice();
+  $('#assist-form').onsubmit = e => {
+    e.preventDefault();
+    const inp = $('#assist-input');
+    const text = inp.value.trim();
+    if (!text) return;
+    inp.value = '';
+    assistSend(text);
+  };
+}
+
 async function start() {
   ME = await api('/api/me');
   if (!ME.authed) return showLogin();
   shell();
   route();
+  mountAssistant();
 }
 window.addEventListener('hashchange', route);
 start().catch(toastErr);
